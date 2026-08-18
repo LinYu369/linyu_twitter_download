@@ -1,0 +1,12 @@
+version: "3.3"
+
+services:
+  twitter_download:
+    image: my-twitter-download
+    build: .
+    container_name: my-twitter-download
+    volumes:
+      - ./:/app
+      # 下载文件保存到宿主机 download 目录 (容器内路径 /download)
+      - ./download/:/download
+    restart: unless-stopped

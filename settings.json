@@ -49,7 +49,13 @@
     
     "md_output": false,
     "md_output_info": "开启后输出 Markdown 文件以记录获取到的推文 (不影响csv生成)",
+
+    "append_mode": true,
+    "append_mode_info": "开启后 csv/md 写入固定文件并追加新内容, 不再每次运行生成新文件; 追加模式下 md 不再按 media_count_limit 分文件; 关闭后恢复旧的每次生成新文件行为",
     
+    "schedule_time": "03:00",
+    "schedule_time_info": "定时运行: 填入每天运行的固定时刻(24小时制, 格式 HH:MM, 如 03:00); 程序启动后立即运行一轮, 之后每天在该时刻自动运行一轮; 留空则运行一次后退出; 配合 autoSync + append_mode 可实现自动增量更新",
+  
     "media_count_limit": 350,
     "media_count_limit_info": "限制单个md文件中包含媒体链接的数量, 默认为 350, 建议使用vscode等动态加载工具打开, 填 0 则不限制",
     "media_count_limit_info_2": "输出格式为：用户名-文件生成日期_文件计数_文件第一条推文的年月日期",

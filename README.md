@@ -44,6 +44,12 @@ elif 不包含:
 ```
 
 # Change Log 
+* **2026-08-18-二改** 
+  * 增加只写入到一个md里面的参数配置，关闭就会像原版一样分开多个md
+  * 增加定时运行功能，填具体时间，每天都会在这个时间运行
+  * 增加docker相关文件，可自行构建镜像运行
+  * 打印输出的日志添加了时间戳，修改了保存本地的文件名，优化了下载过程中的内存占用过大问题。
+
 * **2025-08-09** 
   * 支持获取用户主页内容(头像&banner&简介)--**请直接配置profile_down.py文件并运行**
 
@@ -118,6 +124,21 @@ pip3 install -r requirements.txt
 python3 main.py 
 ``` 
 **Windows** 和上面的一样，配置完setting.json后运行main.py即可 
+
+**docker自行部署** : 
+``` 
+# 命令运行
+sudo docker build -t my-twitter-download .
+
+sudo docker run -it --name=my-twitter-download -v "/vol1/1000/docker/twitter_download:/app" my-twitter-download
+
+# 重新构建
+docker compose up -d --build
+
+# 部署
+docker compose up -d
+
+``` 
 
 
 注意事项
