@@ -38,4 +38,4 @@ class csv_gen():
     def data_input(self, main_par_info: list) -> None:  # 数据格式参见 main_par
         main_par_info[0] = self.stamp2time(
             main_par_info[0])  # 传进来的是 int 时间戳, 故转换一下
-        self.writer.writerow(main_par_info)
+        self.writer.writerow(main_par_info[:11])  # 仅写前11列(封面URL仅供md使用, 不入csv)

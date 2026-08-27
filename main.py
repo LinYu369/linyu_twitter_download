@@ -299,8 +299,8 @@ def get_download_url(_user_info):
                                 name = a2['name']
                                 screen_name = a2['screen_name']
                             if 'extended_entities' in a:
-                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr) if 'video_info' in _media and has_video else (
-                                    _media['media_url_https'], f'{timestr}-img', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr) for _media in a['extended_entities']['media']]
+                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr + [_media['video_info'].get('poster', '')]) if 'video_info' in _media and has_video else (
+                                    _media['media_url_https'], f'{timestr}-img', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr + ['']) for _media in a['extended_entities']['media']]
 
                         elif has_retweet:
                             name = a['retweeted_status_result']['result']['core']['user_results']['result']['legacy']['name']
@@ -309,8 +309,8 @@ def get_download_url(_user_info):
                             id_str = a['retweeted_status_result']['result']['legacy']['id_str']
 
                             if 'extended_entities' in a['retweeted_status_result']['result']['legacy'] and screen_name != _user_info.screen_name:
-                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', full_text] + frr) if 'video_info' in _media and has_video else (
-                                    _media['media_url_https'], f'{timestr}-img-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Image', _media['media_url_https'], '', full_text] + frr) for _media in a['retweeted_status_result']['result']['legacy']['extended_entities']['media']]
+                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', full_text] + frr + [_media['video_info'].get('poster', '')]) if 'video_info' in _media and has_video else (
+                                    _media['media_url_https'], f'{timestr}-img-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Image', _media['media_url_https'], '', full_text] + frr + ['']) for _media in a['retweeted_status_result']['result']['legacy']['extended_entities']['media']]
 
                     elif not _result[1]:  # 已超出目标时间范围
                         start_label = False
@@ -335,8 +335,8 @@ def get_download_url(_user_info):
                         tweet_msecs, start_time_stamp, end_time_stamp)
                     if _result[0]:  # 符合时间限制
                         if 'extended_entities' in a:
-                            _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr) if 'video_info' in _media and has_video else (
-                                _media['media_url_https'], f'{timestr}-img', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr) for _media in a['extended_entities']['media']]
+                            _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr + [_media['video_info'].get('poster', '')]) if 'video_info' in _media and has_video else (
+                                _media['media_url_https'], f'{timestr}-img', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr + ['']) for _media in a['extended_entities']['media']]
                     elif not _result[1]:  # 已超出目标时间范围
                         start_label = False
                         break
@@ -467,6 +467,21 @@ def download_control(_user_info):
                                     async for chunk in response.aiter_bytes(chunk_size=1024*1024):
                                         f.write(chunk)
                                 down_count += 1
+                                # 下载视频封面图到 视频封面/ 子目录 (失败不影响视频)
+                                _poster = csv_info[11] if len(csv_info) > 11 else ''
+                                if _poster:
+                                    try:
+                                        _cover_dir = os.path.join(_user_info.save_path, '视频封面')
+                                        os.makedirs(_cover_dir, exist_ok=True)
+                                        _cover_name = os.path.splitext(
+                                            os.path.split(_file_name)[1])[0] + '.jpg'
+                                        async with client.stream("GET", quote_url(_poster), timeout=(3.05, 16)) as _response:
+                                            if _response.status_code == 200:
+                                                with open(os.path.join(_cover_dir, _cover_name), 'wb', buffering=1024*1024) as f:
+                                                    async for chunk in _response.aiter_bytes(chunk_size=1024*1024):
+                                                        f.write(chunk)
+                                    except Exception:
+                                        pass  # 封面缺失只影响 md 预览, 不阻塞视频下载
 
                     csv_file.data_input(csv_info)
 
