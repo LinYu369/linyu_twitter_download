@@ -111,6 +111,7 @@ autoSync = False
 md_file = None
 md_output = True
 media_count_limit = 0
+md_tweet_limit = 0  # 多md按年份分卷后不再按条数限制, 保留参数兼容旧调用
 append_mode = True
 
 start_time_stamp = 655028357000  # 1990-10-04
@@ -170,8 +171,10 @@ with open('settings.json', 'r', encoding='utf8') as f:
     if not settings['md_output']:
         md_output = False
 
-    # 追加模式: csv/md 写入固定文件并追加新内容, 不再每次生成新文件
+    # 追加模式: csv/md 写入固定文件并追加新内容, 不再每次生成新文件 (默认开启)
     append_mode = settings.get('append_mode', True)
+    # md 写入模式: single-只写一个md文件 | multi-写多个md文件(按年份分, 一年一个 用户_年份.md)
+    md_mode = settings.get('md_mode', 'single')
     # 定时运行: 每天固定时刻(HH:MM)自动运行, 留空则运行一次后退出
     schedule_time = settings.get('schedule_time', '').strip()
     if schedule_time:
@@ -181,9 +184,6 @@ with open('settings.json', 'r', encoding='utf8') as f:
             print(
                 f'schedule_time 格式错误: {schedule_time!r}, 应为 24小时制 HH:MM (如 03:00)')
             sys.exit(1)
-
-    if settings['media_count_limit']:
-        media_count_limit = settings['media_count_limit']
 
     f.close()
 
@@ -299,7 +299,7 @@ def get_download_url(_user_info):
                                 name = a2['name']
                                 screen_name = a2['screen_name']
                             if 'extended_entities' in a:
-                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr + [_media['video_info'].get('poster', '')]) if 'video_info' in _media and has_video else (
+                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr + [(_media['video_info'].get('poster') or _media.get('media_url_https', ''))]) if 'video_info' in _media and has_video else (
                                     _media['media_url_https'], f'{timestr}-img', [tweet_msecs, name, f'@{screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr + ['']) for _media in a['extended_entities']['media']]
 
                         elif has_retweet:
@@ -309,7 +309,7 @@ def get_download_url(_user_info):
                             id_str = a['retweeted_status_result']['result']['legacy']['id_str']
 
                             if 'extended_entities' in a['retweeted_status_result']['result']['legacy'] and screen_name != _user_info.screen_name:
-                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', full_text] + frr + [_media['video_info'].get('poster', '')]) if 'video_info' in _media and has_video else (
+                                _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', full_text] + frr + [(_media['video_info'].get('poster') or _media.get('media_url_https', ''))]) if 'video_info' in _media and has_video else (
                                     _media['media_url_https'], f'{timestr}-img-retweet', [tweet_msecs, name, f"@{screen_name}", _media['expanded_url'], 'Image', _media['media_url_https'], '', full_text] + frr + ['']) for _media in a['retweeted_status_result']['result']['legacy']['extended_entities']['media']]
 
                     elif not _result[1]:  # 已超出目标时间范围
@@ -335,7 +335,7 @@ def get_download_url(_user_info):
                         tweet_msecs, start_time_stamp, end_time_stamp)
                     if _result[0]:  # 符合时间限制
                         if 'extended_entities' in a:
-                            _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr + [_media['video_info'].get('poster', '')]) if 'video_info' in _media and has_video else (
+                            _photo_lst += [(get_heighest_video_quality(_media['video_info']['variants']), f'{timestr}-vid', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Video', get_heighest_video_quality(_media['video_info']['variants']), '', a['full_text']] + frr + [(_media['video_info'].get('poster') or _media.get('media_url_https', ''))]) if 'video_info' in _media and has_video else (
                                 _media['media_url_https'], f'{timestr}-img', [tweet_msecs, _user_info.name, f'@{_user_info.screen_name}', _media['expanded_url'], 'Image', _media['media_url_https'], '', a['full_text']] + frr + ['']) for _media in a['extended_entities']['media']]
                     elif not _result[1]:  # 已超出目标时间范围
                         start_label = False
@@ -429,16 +429,21 @@ def get_download_url(_user_info):
 def download_control(_user_info):
     async def _main():
         async def down_save(url, prefix, csv_info, order: int):
+            # 推文时间戳 -> 年份: 媒体按年存放到 年份/ 子目录, md 链接用相对路径(年份/文件名)
+            _year = time.strftime('%Y', time.localtime(csv_info[0] / 1000)) if type(
+                csv_info[0]) != str else csv_info[0][:4]
+            _year_dir = os.path.join(_user_info.save_path, _year)
+            os.makedirs(_year_dir, exist_ok=True)
             if '.mp4' in url:
-                _file_name = f'{_user_info.save_path + os.sep}{prefix}_{_user_info.count + order}.mp4'
+                _file_name = f'{_year_dir + os.sep}{prefix}_{_user_info.count + order}.mp4'
             else:
                 try:
                     if orig_format:
                         url += f'?name=orig'
                         # 根据图片 url 获取原始格式
-                        _file_name = f'{_user_info.save_path + os.sep}{prefix}_{_user_info.count + order}.{csv_info[5][-3:]}'
+                        _file_name = f'{_year_dir + os.sep}{prefix}_{_user_info.count + order}.{csv_info[5][-3:]}'
                     else:  # 指定格式时，先使用 name=orig，404 则切回 name=4096x4096，以保证最大尺寸
-                        _file_name = f'{_user_info.save_path + os.sep}{prefix}_{_user_info.count + order}.{img_format}'
+                        _file_name = f'{_year_dir + os.sep}{prefix}_{_user_info.count + order}.{img_format}'
                         if img_format != 'png':
                             url += f'?format=jpg&name=4096x4096'
                         else:
@@ -449,7 +454,8 @@ def download_control(_user_info):
 
             # 文件名中去掉空格, 否则 md 链接需 %20 编码, 编辑器无法预览图片/视频
             _file_name = _file_name.replace(' ', '-')
-            csv_info[-5] = os.path.split(_file_name)[1]
+            # 第6位存相对路径: 年份/文件名 (md链接用/分隔, 不用 os.path.join 避免反斜杠, 不用负索引避免 poster 扩展后错位)
+            csv_info[6] = _year + '/' + os.path.split(_file_name)[1]
             if md_output:  # 在下载完毕之前先输出到 Markdown，以尽可能保证高并发下载也能得到正确的推文顺序。
                 md_file.media_tweet_input(csv_info, prefix)
             count = 0
@@ -471,7 +477,7 @@ def download_control(_user_info):
                                 _poster = csv_info[11] if len(csv_info) > 11 else ''
                                 if _poster:
                                     try:
-                                        _cover_dir = os.path.join(_user_info.save_path, '视频封面')
+                                        _cover_dir = os.path.join(_user_info.save_path, _year, '视频封面')
                                         os.makedirs(_cover_dir, exist_ok=True)
                                         _cover_name = os.path.splitext(
                                             os.path.split(_file_name)[1])[0] + '.jpg'
@@ -544,26 +550,24 @@ def main(_user_info: object):
     if md_output:
         global md_file
         md_file = md_gen(_user_info.save_path, _user_info.name, _user_info.screen_name,
-                         settings['time_range'], has_likes, media_count_limit, append_mode)
+                         settings['time_range'], has_likes, media_count_limit, append_mode, md_mode, md_tweet_limit)
 
     if down_log:
         global cache_data
         cache_data = cache_gen(_user_info.save_path)
 
     if autoSync:
-        files = sorted(os.listdir(_user_info.save_path))
+        files = []
+        # 媒体文件已按年份存放到年份子目录, 需递归查找
+        for _root, _dirs, _names in os.walk(_user_info.save_path):
+            for _n in _names:
+                if '-img_' in _n or '-vid_' in _n:
+                    files.append(os.path.join(_root, _n))
         if len(files) > 0:
             global start_time_stamp
             re_rule = r'\d{4}-\d{2}-\d{2}'
-            for i in files[::-1]:
-                if "-img_" in i:
-                    start_time_stamp = time2stamp(re.findall(re_rule, i)[0])
-                    break
-                elif "-vid_" in i:
-                    start_time_stamp = time2stamp(re.findall(re_rule, i)[0])
-                    break
-                else:
-                    start_time_stamp = backup_stamp
+            files.sort()  # 按文件名(含日期)排序, 最后一个为最新媒体
+            start_time_stamp = time2stamp(re.findall(re_rule, files[-1])[0])
         else:
             start_time_stamp = backup_stamp
 
