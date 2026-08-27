@@ -225,5 +225,6 @@ class md_gen():
             else:
                 self.f.write(f'📹📹📹📹📹 [{_display_name}]({fixed_filename})  \n')
         else:
-            self.f.write(f'[![]({fixed_filename})]({csv_info[5]})  \n')
+            # 点击图片打开本地原图(与视频点击封面打开本地视频一致), 避免跳转推特CDN; 博主删推后本地文件仍可看
+            self.f.write(f'[![]({fixed_filename})]({fixed_filename})  \n')
         self.file_media_count += 1
