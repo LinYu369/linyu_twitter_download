@@ -429,21 +429,21 @@ def get_download_url(_user_info):
 def download_control(_user_info):
     async def _main():
         async def down_save(url, prefix, csv_info, order: int):
-            # 推文时间戳 -> 年份: 媒体按年存放到 年份/ 子目录, md 链接用相对路径(年份/文件名)
-            _year = time.strftime('%Y', time.localtime(csv_info[0] / 1000)) if type(
-                csv_info[0]) != str else csv_info[0][:4]
-            _year_dir = os.path.join(_user_info.save_path, _year)
-            os.makedirs(_year_dir, exist_ok=True)
+            # 推文时间戳 -> 年月: 媒体按 年份/月份/媒体 存放, md 链接用相对路径(年份/月份/媒体/文件名)
+            _ym = time.strftime('%Y-%m', time.localtime(csv_info[0] / 1000)) if type(
+                csv_info[0]) != str else csv_info[0][:7]
+            _media_dir = os.path.join(_user_info.save_path, _ym[:4], _ym, '媒体')
+            os.makedirs(_media_dir, exist_ok=True)
             if '.mp4' in url:
-                _file_name = f'{_year_dir + os.sep}{prefix}_{_user_info.count + order}.mp4'
+                _file_name = f'{_media_dir + os.sep}{prefix}_{_user_info.count + order}.mp4'
             else:
                 try:
                     if orig_format:
                         url += f'?name=orig'
                         # 根据图片 url 获取原始格式
-                        _file_name = f'{_year_dir + os.sep}{prefix}_{_user_info.count + order}.{csv_info[5][-3:]}'
+                        _file_name = f'{_media_dir + os.sep}{prefix}_{_user_info.count + order}.{csv_info[5][-3:]}'
                     else:  # 指定格式时，先使用 name=orig，404 则切回 name=4096x4096，以保证最大尺寸
-                        _file_name = f'{_year_dir + os.sep}{prefix}_{_user_info.count + order}.{img_format}'
+                        _file_name = f'{_media_dir + os.sep}{prefix}_{_user_info.count + order}.{img_format}'
                         if img_format != 'png':
                             url += f'?format=jpg&name=4096x4096'
                         else:
@@ -454,8 +454,8 @@ def download_control(_user_info):
 
             # 文件名中去掉空格, 否则 md 链接需 %20 编码, 编辑器无法预览图片/视频
             _file_name = _file_name.replace(' ', '-')
-            # 第6位存相对路径: 年份/文件名 (md链接用/分隔, 不用 os.path.join 避免反斜杠, 不用负索引避免 poster 扩展后错位)
-            csv_info[6] = _year + '/' + os.path.split(_file_name)[1]
+            # 第6位存相对路径: 年份/月份/媒体/文件名 (md链接用/分隔, 不用 os.path.join 避免反斜杠, 不用负索引避免 poster 扩展后错位)
+            csv_info[6] = f'{_ym[:4]}/{_ym}/媒体/' + os.path.split(_file_name)[1]
             if md_output:  # 在下载完毕之前先输出到 Markdown，以尽可能保证高并发下载也能得到正确的推文顺序。
                 md_file.media_tweet_input(csv_info, prefix)
             count = 0
@@ -477,7 +477,7 @@ def download_control(_user_info):
                                 _poster = csv_info[11] if len(csv_info) > 11 else ''
                                 if _poster:
                                     try:
-                                        _cover_dir = os.path.join(_user_info.save_path, _year, '视频封面')
+                                        _cover_dir = os.path.join(_user_info.save_path, _ym[:4], _ym, '视频封面')
                                         os.makedirs(_cover_dir, exist_ok=True)
                                         _cover_name = os.path.splitext(
                                             os.path.split(_file_name)[1])[0] + '.jpg'
