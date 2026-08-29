@@ -26,10 +26,10 @@
     "time_range": "1990-01-01:2030-01-01",
     "time_range_info": "时间范围限制,格式如 1990-01-01:2030-01-01 ,不填默认无限制",
 
-    "down_log": false,
+    "down_log": true,
     "down_log_info": "开启后将记录已下载的内容,避免重复下载浪费带宽; 注意:如需重新下载已下载内容,需要关闭此选项或删除目录下的 cache_data.log 文件",
 
-    "autoSync": false,
+    "autoSync": true,
     "autoSync_info": "开启后将基于本地已有的内容自动同步最新的部分, 本质上是自动调整时间范围的左半部分, 右半建议2030-01-01或更长",
 
     "image_format": "orig",
@@ -41,20 +41,20 @@
     "log_output": false,
     "log_output_info": "是否需要下载过程日志输出",
 
-    "max_concurrent_requests": 8,
+    "max_concurrent_requests": 2,
     "max_concurrent_requests_info": "最大并发数量, 默认为8, 对网络有自信的可以调高; 遇到多次下载失败时适当降低",
 
     "proxy": "",
     "proxy_info": "手动配置代理,默认为空,非必要无需填写 格式: http://localhost:port ",
     
-    "md_output": false,
+    "md_output": true,
     "md_output_info": "开启后输出 Markdown 文件以记录获取到的推文 (不影响csv生成)",
 
     "append_mode": true,
     "append_mode_info": "默认开启: csv/md 写入固定文件并追加新内容(新内容在文件最上方), 不再每次运行生成新文件; 关闭后恢复旧的每次生成新文件行为",
 
-    "md_mode": "single",
-    "md_mode_info": "md写入模式: single-只写一个md文件(新内容插入文件最上方); multi-写多个md文件(按月份分, 目录结构 用户/年份/月份/, 内含 媒体/ 视频封面/ 和 月份.md(如 2024-01.md), 新内容插入对应月份文件最上方, 文件底部带'下一月'跳转链接); 两种模式写入内容格式一致; 媒体文件(图片/视频/视频封面)统一按 年份/月份/媒体(或视频封面)/ 存放, md 内链接为对应相对路径",
+    "md_mode": "multi",
+    "md_mode_info": "md写入模式: single-只写一个md文件(新内容插入文件最上方); multi-写多个md文件(按月份分, md 文件位于 用户/年份/ 下, 命名 月份.md(如 2024-01.md), 新内容插入对应月份文件最上方, 文件顶部与底部带高亮'下一月'跳转链接; 月份文件夹只放媒体: 媒体/ 与 视频封面/); 两种模式写入内容格式一致; 媒体文件(图片/视频/视频封面)统一按 年份/月份/媒体(或视频封面)/ 存放, md 内链接为对应相对路径",
     
     "schedule_time": "03:00",
     "schedule_time_info": "定时运行: 填入每天运行的固定时刻(24小时制, 格式 HH:MM, 如 03:00); 程序启动后立即运行一轮, 之后每天在该时刻自动运行一轮; 留空则运行一次后退出; 配合 autoSync + append_mode 可实现自动增量更新",

@@ -35,24 +35,35 @@ class md_gen():
             self.vol_buffers = {}       # 月份 -> 本次新增内容缓存(StringIO)
             self.written_ids = set()    # 所有md中已写入推文的 status id, 跨运行去重
             _month_re = re.compile(r'^(\d{4}-\d{2})\.md$')
+            # 跨月导航行(兼容新旧样式): 整行匹配, 避免误删以 **→→→ 开头的推文正文
+            _nav_re = re.compile(r'^(?:\[→ [^\]]+\]\([^)]+\.md\)|\*\*→→→ \[[^\]]+\]\([^)]+\.md\) ←←←\*\*)$')
             for _root, _dirs, _names in os.walk(save_path):
                 for _f in _names:
                     _m = _month_re.match(_f)
-                    if _m:
-                        _p = os.path.join(_root, _f)
-                        with open(_p, 'r', encoding='utf-8-sig') as f:
-                            _content = f.read()
-                        _lines = _content.split('\n')
-                        while _lines and not _lines[-1].strip():
-                            _lines.pop()    # 去掉文件末尾空行, 便于识别底部链接
-                        if len(_lines) > 3 and re.match(r'^\[→ .+\]\(.+\.md\)$', _lines[-1].strip()):
-                            _lines.pop()    # 剔除上一轮写入的底部跨月导航链接
-                        self.vol_files[_m.group(1)] = {
-                            'filename': _p,
-                            'header_lines': _lines[:3],
-                            'old_content': '\n'.join(_lines[3:]).lstrip('\n'),
-                        }
-                        self.written_ids |= set(re.findall(r'status/(\d+)', _content))
+                    if not _m:
+                        continue
+                    if os.path.basename(_root) != _m.group(1)[:4]:
+                        # 非年份文件夹下的月份md(旧版放在月份文件夹内)仅参与去重, 保持原样不再更新
+                        with open(os.path.join(_root, _f), 'r', encoding='utf-8-sig') as f:
+                            self.written_ids |= set(re.findall(r'status/(\d+)', f.read()))
+                        continue
+                    _p = os.path.join(_root, _f)
+                    with open(_p, 'r', encoding='utf-8-sig') as f:
+                        _content = f.read()
+                    _lines = _content.split('\n')
+                    while _lines and not _lines[-1].strip():
+                        _lines.pop()    # 去掉文件末尾空行, 便于识别底部导航行
+                    if len(_lines) > 3 and _nav_re.match(_lines[-1].strip()):
+                        _lines.pop()    # 剔除末尾的底部跨月导航行
+                    _start = 3  # 跳过 header 后的空行与顶部跨月导航行, 正文从第一个内容行开始
+                    while _start < len(_lines) and (not _lines[_start].strip() or _nav_re.match(_lines[_start].strip())):
+                        _start += 1
+                    self.vol_files[_m.group(1)] = {
+                        'filename': _p,
+                        'header_lines': _lines[:3],
+                        'old_content': '\n'.join(_lines[_start:]).lstrip('\n'),
+                    }
+                    self.written_ids |= set(re.findall(r'status/(\d+)', _content))
             # 旧按年结构(用户_年份.md)仅参与去重, 保持原样不再更新
             _pattern = re.compile(rf'^{re.escape(screen_name)}_(\d{{4}})\.md$')
             for _f in os.listdir(save_path):
@@ -110,22 +121,31 @@ class md_gen():
             if _info is None:
                 if not new_content.strip():  # 该月份不存在且本次无新增, 跳过
                     continue
-                _month_dir = os.path.join(self.save_path, _month[:4], _month)
-                os.makedirs(_month_dir, exist_ok=True)
-                _filename = os.path.join(_month_dir, f'{_month}.md')
+                _year_dir = os.path.join(self.save_path, _month[:4])
+                os.makedirs(_year_dir, exist_ok=True)
+                _filename = os.path.join(_year_dir, f'{_month}.md')   # md 位于年份文件夹内
             else:
                 if not new_content.strip() and not _has_new_month:
-                    continue    # 无新增且无新月份出现, 底部链接不变, 无需重写
+                    continue    # 无新增且无新月份出现, 导航链接不变, 无需重写
                 _filename = _info['filename']
-            # 底部跨月导航链接: 指向时间上相邻的下一月(如 [→ 2024-02](2024-02.md)); 已是最后一个月则不写
-            _bottom = ''
+            # 跨月导航行: 顶部指向上一月(更早), 底部指向下一月(更晚); 跨年用相对路径 ../年份/月份.md; 无相邻月份则不写
+            _nav_top, _nav_bottom = '', ''
+            if _idx > 0:
+                _prev_m = _all_months[_idx - 1]
+                _target = os.path.join(self.save_path, _prev_m[:4], f'{_prev_m}.md')
+                _rel = os.path.relpath(_target, os.path.dirname(_filename)).replace('\\', '/')
+                _nav_top = f'**→→→ [{_prev_m}]({_md_quote(_rel)}) ←←←**'
             if _idx + 1 < len(_all_months):
                 _next_m = _all_months[_idx + 1]
-                _bottom = f'\n[→ {_next_m}]({_next_m}.md)\n'
+                _target = os.path.join(self.save_path, _next_m[:4], f'{_next_m}.md')
+                _rel = os.path.relpath(_target, os.path.dirname(_filename)).replace('\\', '/')
+                _nav_bottom = f'**→→→ [{_next_m}]({_md_quote(_rel)}) ←←←**'
+            _top = f'{_nav_top}\n\n' if _nav_top else ''      # 文件开头(header 后)的导航
+            _bottom = f'\n{_nav_bottom}\n' if _nav_bottom else ''   # 文件末尾的导航
             if _info is None:  # 该月份文件不存在: 新建
-                _final = _header + new_content + _bottom
+                _final = _header + _top + new_content + _bottom
             else:
-                _final = '\n'.join(_info['header_lines']) + '\n\n' + new_content + (\
+                _final = '\n'.join(_info['header_lines']) + '\n\n' + _top + new_content + (\
                     '\n' + _info['old_content'].rstrip('\n') if _info['old_content'].strip() else '') + _bottom
             _tmp = _filename + '.tmp'
             try:
@@ -168,16 +188,16 @@ class md_gen():
         return otherStyleTime
 
     def media_tweet_input(self, csv_info, prefix) -> None:
+        fixed_timestr = csv_info[0] if type(
+            csv_info[0]) == str else self.stamp2time(csv_info[0])
         # 链接文字用文件名(去掉路径); 链接目标仅编码特殊字符(中文/斜杠保持原样), 避免 Markdown 链接解析失败
         _display_name = os.path.split(csv_info[6])[1].replace('[', '\\[').replace(']', '\\]')
-        # 多md按月: md 位于 年份/月份/ 目录, 媒体在其 媒体/ 子目录, 链接相对 md 所在目录; 单md: 链接相对用户根目录
+        # 多md按月: md 位于 年份/ 目录, 媒体在 年份/月份/媒体 子目录, 链接相对 md 所在目录(年份目录); 单md: 链接相对用户根目录
         if self.md_mode == 'multi':
-            _media_link = '媒体/' + os.path.split(csv_info[6])[1]
+            _media_link = fixed_timestr[:7] + '/媒体/' + os.path.split(csv_info[6])[1]
         else:
             _media_link = csv_info[6]
         fixed_filename = _md_quote(_media_link)
-        fixed_timestr = csv_info[0] if type(
-            csv_info[0]) == str else self.stamp2time(csv_info[0])
         currentDate = fixed_timestr[0:7]
 
         tweet_status_id = re.findall(r"status/(\d+)", csv_info[3])[0]
@@ -237,9 +257,9 @@ class md_gen():
         # 行尾加两个空格硬换行, 避免与互动数据/其他媒体渲染成同一段
         if 'Video' in csv_info[4]:
             if len(csv_info) > 11 and csv_info[11]:
-                # 封面存于 月份/视频封面/ 子目录; 多md相对 md 所在目录(月份目录), 单md相对用户根目录(把媒体路径中的 /媒体 替换为 /视频封面); 用 / 分隔避免 Windows 反斜杠
+                # 封面存于 月份/视频封面/ 子目录; 多md相对 md 所在目录(年份目录), 单md相对用户根目录(把媒体路径中的 /媒体 替换为 /视频封面); 用 / 分隔避免 Windows 反斜杠
                 _cover = _md_quote(
-                    ('视频封面/' if self.md_mode == 'multi' else os.path.dirname(csv_info[6]).replace('/媒体', '') + '/视频封面/') +
+                    (fixed_timestr[:7] + '/视频封面/' if self.md_mode == 'multi' else os.path.dirname(csv_info[6]).replace('/媒体', '') + '/视频封面/') +
                     os.path.splitext(os.path.basename(csv_info[6]))[0] + '.jpg')
                 # 封面图上一行单独输出 📹📹 视频名 📹📹 提示这是视频(否则和普通图片无法区分)
                 self.f.write(f'📹📹 {os.path.basename(csv_info[6])} 📹📹  \n')
