@@ -429,10 +429,11 @@ def get_download_url(_user_info):
 def download_control(_user_info):
     async def _main():
         async def down_save(url, prefix, csv_info, order: int):
-            # 推文时间戳 -> 年月: 媒体按 年份/月份/媒体 存放, md 链接用相对路径(年份/月份/媒体/文件名)
+            # 推文时间戳 -> 年月: 媒体按类型分目录存放(图片/视频), md 链接用相对路径(年份/月份/类型/文件名)
             _ym = time.strftime('%Y-%m', time.localtime(csv_info[0] / 1000)) if type(
                 csv_info[0]) != str else csv_info[0][:7]
-            _media_dir = os.path.join(_user_info.save_path, _ym[:4], _ym, '媒体')
+            _subdir = '视频' if '.mp4' in url else '图片'
+            _media_dir = os.path.join(_user_info.save_path, _ym[:4], _ym, _subdir)
             os.makedirs(_media_dir, exist_ok=True)
             if '.mp4' in url:
                 _file_name = f'{_media_dir + os.sep}{prefix}_{_user_info.count + order}.mp4'
@@ -454,8 +455,8 @@ def download_control(_user_info):
 
             # 文件名中去掉空格, 否则 md 链接需 %20 编码, 编辑器无法预览图片/视频
             _file_name = _file_name.replace(' ', '-')
-            # 第6位存相对路径: 年份/月份/媒体/文件名 (md链接用/分隔, 不用 os.path.join 避免反斜杠, 不用负索引避免 poster 扩展后错位)
-            csv_info[6] = f'{_ym[:4]}/{_ym}/媒体/' + os.path.split(_file_name)[1]
+            # 第6位存相对路径: 年份/月份/图片|视频/文件名 (md链接用/分隔, 不用 os.path.join 避免反斜杠, 不用负索引避免 poster 扩展后错位)
+            csv_info[6] = f'{_ym[:4]}/{_ym}/{_subdir}/' + os.path.split(_file_name)[1]
             if md_output:  # 在下载完毕之前先输出到 Markdown，以尽可能保证高并发下载也能得到正确的推文顺序。
                 md_file.media_tweet_input(csv_info, prefix)
             count = 0
@@ -473,17 +474,16 @@ def download_control(_user_info):
                                     async for chunk in response.aiter_bytes(chunk_size=1024*1024):
                                         f.write(chunk)
                                 down_count += 1
-                                # 下载视频封面图到 视频封面/ 子目录 (失败不影响视频)
+                                # 下载视频封面图到 视频/ 目录与视频文件同目录同名 (失败不影响视频)
                                 _poster = csv_info[11] if len(csv_info) > 11 else ''
                                 if _poster:
                                     try:
-                                        _cover_dir = os.path.join(_user_info.save_path, _ym[:4], _ym, '视频封面')
-                                        os.makedirs(_cover_dir, exist_ok=True)
+                                        os.makedirs(_media_dir, exist_ok=True)
                                         _cover_name = os.path.splitext(
                                             os.path.split(_file_name)[1])[0] + '.jpg'
                                         async with client.stream("GET", quote_url(_poster), timeout=(3.05, 16)) as _response:
                                             if _response.status_code == 200:
-                                                with open(os.path.join(_cover_dir, _cover_name), 'wb', buffering=1024*1024) as f:
+                                                with open(os.path.join(_media_dir, _cover_name), 'wb', buffering=1024*1024) as f:
                                                     async for chunk in _response.aiter_bytes(chunk_size=1024*1024):
                                                         f.write(chunk)
                                     except Exception:

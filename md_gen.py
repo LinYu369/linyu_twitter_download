@@ -29,12 +29,23 @@ class md_gen():
         self.current_tweet_info = ['', '', '']
         self.file_media_count = 0  # 当前文件中的媒体数量
         self.file_count = 1  # 已输出的文件数量
+        # 图片/视频分文件流: 仅 multi 模式使用, 与总流并行写入, 非 multi 恒为 None
+        self.f_img = None
+        self.f_vid = None
 
-        if md_mode == 'multi':      # 多md模式: 按月份分md文件(年份/月份/月份.md), 新内容插入对应月份文件头部
-            self.vol_files = {}         # 月份(YYYY-MM) -> {'filename','header_lines','old_content'}
-            self.vol_buffers = {}       # 月份 -> 本次新增内容缓存(StringIO)
+        if md_mode == 'multi':      # 多md模式: 按月份分md文件(年份/月份/月份.md), 新内容插入对应月份文件头部; 另有 月份-图片.md / 月份-视频.md 按媒体类型分文件
+            self.vol_files = {}         # 月份(YYYY-MM) -> 总md {'filename','header_lines','old_content'}
+            self.img_files = {}         # 图片md (-图片.md)
+            self.vid_files = {}         # 视频md (-视频.md)
+            self.vol_buffers = {}       # 月份 -> 总md 本次新增内容缓存(StringIO)
+            self.img_buffers = {}       # 月份 -> 图片md 本次新增内容缓存(StringIO)
+            self.vid_buffers = {}       # 月份 -> 视频md 本次新增内容缓存(StringIO)
             self.written_ids = set()    # 所有md中已写入推文的 status id, 跨运行去重
-            _month_re = re.compile(r'^(\d{4}-\d{2})\.md$')
+            self.suffixes = ('', '-图片', '-视频')
+            _month_re = re.compile(r'^(\d{4}-\d{2})(-图片|-视频)?\.md$')
+            _targets = {'': (self.vol_files, self.vol_buffers),
+                        '-图片': (self.img_files, self.img_buffers),
+                        '-视频': (self.vid_files, self.vid_buffers)}
             # 跨月导航行(兼容新旧样式): 整行匹配, 避免误删以 **→→→ 开头的推文正文
             _nav_re = re.compile(r'^(?:\[→ [^\]]+\]\([^)]+\.md\)|\*\*→→→ \[[^\]]+\]\([^)]+\.md\) ←←←\*\*)$')
             for _root, _dirs, _names in os.walk(save_path):
@@ -42,7 +53,8 @@ class md_gen():
                     _m = _month_re.match(_f)
                     if not _m:
                         continue
-                    if os.path.basename(_root) != _m.group(1)[:4]:
+                    _month, _suffix = _m.group(1), _m.group(2) or ''
+                    if os.path.basename(_root) != _month[:4]:
                         # 非年份文件夹下的月份md(旧版放在月份文件夹内)仅参与去重, 保持原样不再更新
                         with open(os.path.join(_root, _f), 'r', encoding='utf-8-sig') as f:
                             self.written_ids |= set(re.findall(r'status/(\d+)', f.read()))
@@ -58,7 +70,8 @@ class md_gen():
                     _start = 3  # 跳过 header 后的空行与顶部跨月导航行, 正文从第一个内容行开始
                     while _start < len(_lines) and (not _lines[_start].strip() or _nav_re.match(_lines[_start].strip())):
                         _start += 1
-                    self.vol_files[_m.group(1)] = {
+                    _files, _buffers = _targets[_suffix]
+                    _files[_month] = {
                         'filename': _p,
                         'header_lines': _lines[:3],
                         'old_content': '\n'.join(_lines[_start:]).lstrip('\n'),
@@ -98,7 +111,8 @@ class md_gen():
     def md_close(self):
         if len(self.current_tweet_info[1]) > 0:  # 本次运行未输出推文时不再写入互动数据
             # 输出最后一个推文的互动数据(媒体行已自带换行, 无需前导\n)
-            self.f.write(self.current_tweet_info[1] + '\n')
+            for _s in self._streams():
+                _s.write(self.current_tweet_info[1] + '\n')
         if self.is_append_like:    # 追加式: 本次新增内容统一插入文件头部
             if self.md_mode == 'multi':
                 self._flush_to_multi_files()
@@ -108,38 +122,46 @@ class md_gen():
             self.f.close()
 
     def _flush_to_multi_files(self):
-        """多md(按月)落盘: 每个月份的新增内容插入对应月份文件头部(最新在上), 文件底部写跨月导航链接, 文件不存在则新建"""
+        """多md(按月)落盘: 对 总md/图片md/视频md 三个系列, 每个月份的新增内容插入对应文件头部(最新在上), 文件底部写跨月导航链接, 文件不存在则新建"""
+        self._flush_series('', self.vol_files, self.vol_buffers)
+        self._flush_series('-图片', self.img_files, self.img_buffers)
+        self._flush_series('-视频', self.vid_files, self.vid_buffers)
+
+    def _flush_series(self, suffix, _files, _buffers):
+        """单个 md 系列(总/图片/视频)落盘: 月份集合=磁盘已有文件+本次新增缓存, 相邻月份之间生成"下一月"导航链接; 出现新月份时全量刷新"""
         _header = f"{self.user_name} {self.screen_name}\nTweet Range: {self.tweet_range}\nSave Path: {self.save_path}\n\n"
         # 全部月份(已有文件+本次新增)按时间排序, 相邻月份之间生成"下一月"导航链接
-        _all_months = sorted(set(self.vol_files.keys()) | set(self.vol_buffers.keys()))
-        # 出现新月份时各文件的"下一月"链接目标可能变化, 需刷新所有文件; 否则仅重写有新增内容的文件
-        _has_new_month = bool(set(self.vol_buffers.keys()) - set(self.vol_files.keys()))
+        _all_months = sorted(set(_files.keys()) | set(_buffers.keys()))
+        # 出现新月份时各文件的"下一月"链接目标可能变化, 需刷新该系列所有文件; 否则仅重写有新增内容的文件
+        _has_new_month = bool(set(_buffers.keys()) - set(_files.keys()))
         for _idx, _month in enumerate(_all_months):
-            _buf = self.vol_buffers.get(_month)
-            _info = self.vol_files.get(_month)
+            _buf = _buffers.get(_month)
+            _info = _files.get(_month)
             new_content = _buf.getvalue() if _buf else ''
             if _info is None:
                 if not new_content.strip():  # 该月份不存在且本次无新增, 跳过
                     continue
                 _year_dir = os.path.join(self.save_path, _month[:4])
                 os.makedirs(_year_dir, exist_ok=True)
-                _filename = os.path.join(_year_dir, f'{_month}.md')   # md 位于年份文件夹内
+                _filename = os.path.join(_year_dir, f'{_month}{suffix}.md')   # md 位于年份文件夹内
             else:
                 if not new_content.strip() and not _has_new_month:
                     continue    # 无新增且无新月份出现, 导航链接不变, 无需重写
                 _filename = _info['filename']
             # 跨月导航行: 顶部指向上一月(更早), 底部指向下一月(更晚); 跨年用相对路径 ../年份/月份.md; 无相邻月份则不写
+            # 图片/视频系列链接文字带类型后缀(如 2026-09 图片), 与总 md 的纯月份文字区分
             _nav_top, _nav_bottom = '', ''
+            _label = ' 图片' if suffix == '-图片' else ' 视频' if suffix == '-视频' else ''
             if _idx > 0:
                 _prev_m = _all_months[_idx - 1]
-                _target = os.path.join(self.save_path, _prev_m[:4], f'{_prev_m}.md')
+                _target = os.path.join(self.save_path, _prev_m[:4], f'{_prev_m}{suffix}.md')
                 _rel = os.path.relpath(_target, os.path.dirname(_filename)).replace('\\', '/')
-                _nav_top = f'**→→→ [{_prev_m}]({_md_quote(_rel)}) ←←←**'
+                _nav_top = f'**→→→ [{_prev_m}{_label}]({_md_quote(_rel)}) ←←←**'
             if _idx + 1 < len(_all_months):
                 _next_m = _all_months[_idx + 1]
-                _target = os.path.join(self.save_path, _next_m[:4], f'{_next_m}.md')
+                _target = os.path.join(self.save_path, _next_m[:4], f'{_next_m}{suffix}.md')
                 _rel = os.path.relpath(_target, os.path.dirname(_filename)).replace('\\', '/')
-                _nav_bottom = f'**→→→ [{_next_m}]({_md_quote(_rel)}) ←←←**'
+                _nav_bottom = f'**→→→ [{_next_m}{_label}]({_md_quote(_rel)}) ←←←**'
             _top = f'{_nav_top}\n\n' if _nav_top else ''      # 文件开头(header 后)的导航
             _bottom = f'\n{_nav_bottom}\n' if _nav_bottom else ''   # 文件末尾的导航
             if _info is None:  # 该月份文件不存在: 新建
@@ -182,6 +204,15 @@ class md_gen():
             except OSError:
                 pass
 
+    def _streams(self):
+        """当前推文月份的全部写入流(总md + 图片md + 视频md); 非 multi 模式只有总流"""
+        _streams = [self.f]
+        if self.f_img is not None:
+            _streams.append(self.f_img)
+        if self.f_vid is not None:
+            _streams.append(self.f_vid)
+        return _streams
+
     def stamp2time(self, msecs_stamp: int) -> str:
         timeArray = time.localtime(msecs_stamp/1000)
         otherStyleTime = time.strftime("%Y-%m-%d %H:%M", timeArray)
@@ -192,9 +223,10 @@ class md_gen():
             csv_info[0]) == str else self.stamp2time(csv_info[0])
         # 链接文字用文件名(去掉路径); 链接目标仅编码特殊字符(中文/斜杠保持原样), 避免 Markdown 链接解析失败
         _display_name = os.path.split(csv_info[6])[1].replace('[', '\\[').replace(']', '\\]')
-        # 多md按月: md 位于 年份/ 目录, 媒体在 年份/月份/媒体 子目录, 链接相对 md 所在目录(年份目录); 单md: 链接相对用户根目录
+        _is_video = 'Video' in csv_info[4]
+        # 多md按月: md 位于 年份/ 目录, 媒体在 年份/月份/图片|视频 子目录, 链接相对 md 所在目录(年份目录); 单md: 链接相对用户根目录
         if self.md_mode == 'multi':
-            _media_link = fixed_timestr[:7] + '/媒体/' + os.path.split(csv_info[6])[1]
+            _media_link = fixed_timestr[:7] + ('/视频/' if _is_video else '/图片/') + os.path.split(csv_info[6])[1]
         else:
             _media_link = csv_info[6]
         fixed_filename = _md_quote(_media_link)
@@ -209,12 +241,18 @@ class md_gen():
         if self.current_tweet_info[0] != tweet_status_id:  # 检测到现在正准备输出新的推文
             if self.is_append_like:
                 self.written_ids.add(tweet_status_id)   # 记录本次写入的推文, 供同轮后续媒体/下轮去重
-            # 输出上一个推文的互动数据(媒体行已自带换行, 无需前导\n); 此时 self.f 仍是上一个推文所属年份的缓存
-            self.f.write(f'{self.current_tweet_info[1]}\n\n' if len(
-                self.current_tweet_info[1]) > 0 else '')
+            # 输出上一个推文的互动数据(媒体行已自带换行, 无需前导\n); 此时各流仍是上一个推文所属月份的缓存
+            _prev_stats = f'{self.current_tweet_info[1]}\n\n' if len(
+                self.current_tweet_info[1]) > 0 else ''
+            for _s in self._streams():
+                _s.write(_prev_stats)
             if self.md_mode == 'multi':
-                # 按推文月份切换写入缓存 (多md: 一月一个md文件)
+                # 按推文月份切换三系列写入缓存 (多md: 一月一组 总/图片/视频 md)
                 self.f = self.vol_buffers.setdefault(
+                    fixed_timestr[:7], io.StringIO())
+                self.f_img = self.img_buffers.setdefault(
+                    fixed_timestr[:7], io.StringIO())
+                self.f_vid = self.vid_buffers.setdefault(
                     fixed_timestr[:7], io.StringIO())
 
             # 超出媒体限制，新建文件 (仅旧的非追加模式)
@@ -235,38 +273,48 @@ class md_gen():
                 self.f.write(f"Save Path: {self.save_path}\n\n")
 
             if not self.has_likes and 'retweet' not in prefix and currentDate != self.current_tweet_info[2]:
-                self.f.write(f'## {currentDate}\n')  # 输出 年月 标题
+                for _s in self._streams():
+                    _s.write(f'## {currentDate}\n')  # 输出 年月 标题
                 self.current_tweet_info[2] = currentDate
 
             # 转推注释(独立一行, 不进入标题); 后跟的英文单词提供强LTR锚点, 昵称含RTL文本也不会错位
             if 'retweet' in prefix:
-                self.f.write(f'*{self.user_name} retweeted*\n')
+                for _s in self._streams():
+                    _s.write(f'*{self.user_name} retweeted*\n')
             # 推文小标题: 时间 · 昵称 [原文](推文链接)(不显示用户名)
             # 时间放昵称前面: 昵称若含RTL文本(阿拉伯语等), 紧跟其后的 [原文] 的汉字是强LTR锚点, 可避免bidi渲染重排错位;
             # 若昵称在前则其后的中性符号(·)和纯数字时间会被RTL化导致显示乱序(已用bidi算法验证)
-            self.f.write(
-                f'### {fixed_timestr} · {csv_info[1]} [原文]({csv_info[3]})\n')
+            for _s in self._streams():
+                _s.write(
+                    f'### {fixed_timestr} · {csv_info[1]} [原文]({csv_info[3]})\n')
             # 推文文本信息(每行行尾加两空格实现硬换行, 否则多行会被渲染成同一段)
             if csv_info[7]:
-                self.f.write(csv_info[7].replace('\n', '  \n') + '  \n')
+                for _s in self._streams():
+                    _s.write(csv_info[7].replace('\n', '  \n') + '  \n')
             self.current_tweet_info[0] = tweet_status_id
             self.current_tweet_info[1] = f'{csv_info[8]} Likes, {csv_info[9]} Retweets, {csv_info[10]} Replies'
 
         # 输出当前推文的媒体标签(其中一张)
         # 视频优先用封面图链接([![封面](封面)](视频)), 点击封面打开本地视频; 无封面时回退文本链接
-        # 行尾加两个空格硬换行, 避免与互动数据/其他媒体渲染成同一段
+        # 行尾加两个空格硬换行, 避免与互动数据/其他媒体渲染成同一段; 图片行写 总md+图片md, 视频行写 总md+视频md
         if 'Video' in csv_info[4]:
             if len(csv_info) > 11 and csv_info[11]:
-                # 封面存于 月份/视频封面/ 子目录; 多md相对 md 所在目录(年份目录), 单md相对用户根目录(把媒体路径中的 /媒体 替换为 /视频封面); 用 / 分隔避免 Windows 反斜杠
+                # 封面与视频同存于 月份/视频/ 目录(同名不同扩展名); 多md相对 md 所在目录(年份目录), 单md相对用户根目录; 用 / 分隔避免 Windows 反斜杠
                 _cover = _md_quote(
-                    (fixed_timestr[:7] + '/视频封面/' if self.md_mode == 'multi' else os.path.dirname(csv_info[6]).replace('/媒体', '') + '/视频封面/') +
+                    (fixed_timestr[:7] + '/视频/' if self.md_mode == 'multi' else os.path.dirname(csv_info[6]) + '/') +
                     os.path.splitext(os.path.basename(csv_info[6]))[0] + '.jpg')
                 # 封面图上一行单独输出 📹📹 视频名 📹📹 提示这是视频(否则和普通图片无法区分)
                 self.f.write(f'📹📹 {os.path.basename(csv_info[6])} 📹📹  \n')
                 self.f.write(f'[![{_display_name}]({_cover})]({fixed_filename})  \n')
+                if self.f_vid is not None:
+                    self.f_vid.write(f'📹📹 {os.path.basename(csv_info[6])} 📹📹  \n')
+                    self.f_vid.write(f'[![{_display_name}]({_cover})]({fixed_filename})  \n')
             else:
                 self.f.write(f'📹📹📹📹📹 [{_display_name}]({fixed_filename})  \n')
+                if self.f_vid is not None:
+                    self.f_vid.write(f'📹📹📹📹📹 [{_display_name}]({fixed_filename})  \n')
         else:
-            # 点击图片打开本地原图(与视频点击封面打开本地视频一致), 避免跳转推特CDN; 博主删推后本地文件仍可看
             self.f.write(f'[![]({fixed_filename})]({fixed_filename})  \n')
+            if self.f_img is not None:
+                self.f_img.write(f'[![]({fixed_filename})]({fixed_filename})  \n')
         self.file_media_count += 1
