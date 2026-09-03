@@ -6,21 +6,27 @@
 旧结构:
     用户/年份/YYYY-MM/
         ├── 媒体/          (图片与视频混放)
-        ├── 视频封面/      (封面 jpg)
+        ├── 视频封面/      (封面 jpg, 与 媒体/ 平级)
         └── 年份/YYYY-MM.md  (顶部/底部跨月导航)
 
 新结构:
     用户/年份/YYYY-MM/
         ├── 图片/          (仅图片)
-        ├── 视频/          (仅视频 + 同名封面 jpg)
+        ├── 视频/          (仅视频)
+        │   └── 视频封面/  (封面 jpg, 位于视频文件夹下)
         └── 年份/YYYY-MM.md        (总 md, 链接指向 图片|视频/)
             YYYY-MM-图片.md        (仅含图片推文条目)
             YYYY-MM-视频.md        (仅含视频推文条目)
 
+兼容性说明:
+    - 旧结构(媒体/ + 平级 视频封面/): 媒体按扩展名分流, 封面移入 视频/视频封面/
+    - 中间态(已迁移但封面与视频同目录): 视频/ 根下非视频文件自动归位 视频/视频封面/
+    - md 封面链接三种状态(平级 视频封面/、与视频同目录、已正确)均归一化到 月份/视频/视频封面/
+
 脚本执行步骤(每用户):
-    1. 移动 媒体/ 下文件到 图片/ 或 视频/ (按扩展名); 移动 视频封面/*.jpg 到 视频/ (与视频同名)
+    1. 移动 媒体/ 下文件到 图片/ 或 视频/ (按扩展名); 封面文件统一移入 视频/视频封面/
     2. 删除空的 媒体/ 视频封面/ 目录
-    3. 重写总 md 中所有链接: 媒体/ -> 图片|视频/ (按行内扩展名), 视频封面/ -> 视频/
+    3. 重写总 md 中所有链接: 封面 -> 视频/视频封面/, 媒体/ -> 图片|视频/ (按行内扩展名)
     4. 从总 md 解析推文条目(### 标题..互动数据行), 按媒体类型拆分重建 月份-图片.md / 月份-视频.md
     5. 为两类分文件补跨月导航(顶部上一月/底部下一月, 链接文字带类型后缀)
 
@@ -68,17 +74,17 @@ def _read_settings_save_path():
 
 
 def _migrate_month_dir(month_dir: str, stat: dict) -> None:
-    """移动 媒体/ 与 视频封面/ 中的文件到 图片/、视频/, 并删除空目录"""
+    """移动 媒体/ 与 旧平级 视频封面/ 中的文件到 图片/、视频/、视频/视频封面/; 兼容上版迁移残留(视频/根下封面归位), 并删除空目录"""
     _media_dir = os.path.join(month_dir, '媒体')
-    _cover_dir = os.path.join(month_dir, '视频封面')
+    _cover_dir = os.path.join(month_dir, '视频封面')      # 旧平级封面目录
     _img_dir = os.path.join(month_dir, '图片')
     _vid_dir = os.path.join(month_dir, '视频')
+    _vid_cover_dir = os.path.join(_vid_dir, '视频封面')   # 新封面目录: 视频/视频封面/
 
-    def _move_out(_src, _ext):
-        """把媒体文件按扩展名移动到 图片|视频/; 目标已存在同名文件则视为已迁移跳过"""
-        _target = _vid_dir if _ext in _VIDEO_EXTS else _img_dir
-        os.makedirs(_target, exist_ok=True)
-        _dst = os.path.join(_target, os.path.basename(_src))
+    def _move_to(_src, _target_dir):
+        """移动单文件到目标目录; 目标已存在同名文件则视为已迁移跳过"""
+        os.makedirs(_target_dir, exist_ok=True)
+        _dst = os.path.join(_target_dir, os.path.basename(_src))
         if os.path.exists(_dst):
             return
         shutil.move(_src, _dst)
@@ -90,37 +96,54 @@ def _migrate_month_dir(month_dir: str, stat: dict) -> None:
             if not os.path.isfile(_src):
                 continue
             _ext = os.path.splitext(_name)[1].lower()
-            _move_out(_src, _ext)
+            _move_to(_src, _vid_dir if _ext in _VIDEO_EXTS else _img_dir)
         try:
             os.rmdir(_media_dir)    # 仅当目录已空才删除
         except OSError:
             pass
-    if os.path.isdir(_cover_dir):
-        os.makedirs(_vid_dir, exist_ok=True)
+    if os.path.isdir(_cover_dir):   # 旧平级 视频封面/ -> 视频/视频封面/
         for _name in sorted(os.listdir(_cover_dir)):
             _src = os.path.join(_cover_dir, _name)
-            if not os.path.isfile(_src):
-                continue
-            _dst = os.path.join(_vid_dir, os.path.basename(_src))
-            if os.path.exists(_dst):
-                continue
-            shutil.move(_src, _dst)
-            stat['moved'] += 1
+            if os.path.isfile(_src):
+                _move_to(_src, _vid_cover_dir)
         try:
             os.rmdir(_cover_dir)
         except OSError:
             pass
+    if os.path.isdir(_vid_dir):     # 上版迁移残留: 视频/ 根下非视频文件(封面) -> 视频/视频封面/
+        for _name in sorted(os.listdir(_vid_dir)):
+            _src = os.path.join(_vid_dir, _name)
+            if not os.path.isfile(_src):
+                continue
+            if os.path.splitext(_name)[1].lower() not in _VIDEO_EXTS:
+                _move_to(_src, _vid_cover_dir)
+
+
+def _fix_cover_path(cover: str) -> str:
+    """封面链接路径归一化: 旧平级(月份/视频封面/x.jpg) 与 上版残留(月份/视频/x.jpg) -> 月份/视频/视频封面/x.jpg; 已正确则原样返回"""
+    if '视频/视频封面/' in cover:      # 新结构已正确
+        return cover
+    if '视频封面/' in cover:           # 旧平级封面目录
+        return cover.replace('视频封面/', '视频/视频封面/', 1)
+    if '/视频/' in cover:              # 上版迁移残留(封面与视频同目录)
+        return cover.replace('/视频/', '/视频/视频封面/', 1)
+    return cover
 
 
 def _fix_md_links(md_path: str, stat: dict) -> None:
-    """重写 md 中媒体链接: 视频封面/ -> 视频/, 媒体/ -> 图片|视频/ (按行内媒体文件扩展名)"""
+    """重写 md 中媒体链接: 封面行路径统一到 月份/视频/视频封面/, 媒体/ -> 图片|视频/ (按行内媒体文件扩展名)"""
     with open(md_path, 'r', encoding='utf-8-sig') as f:
         _lines = f.read().split('\n')
     _changed = 0
     for _i, _line in enumerate(_lines):
-        if '视频封面/' in _line:
-            _line = _line.replace('视频封面/', '视频/')
-            _changed += 1
+        # 封面行 [![文件名](封面路径)](视频路径): 仅修正封面路径, 避免误改视频链接
+        _m = re.match(r'^\[!\[[^\]]+\]\(([^)]*)\)\]\([^)]*\)  $', _line)
+        if _m:
+            _cover_old = _m.group(1)
+            _cover_new = _fix_cover_path(_cover_old)
+            if _cover_new != _cover_old:
+                _line = _line.replace('(' + _cover_old + ')', '(' + _cover_new + ')', 1)
+                _changed += 1
         if '媒体/' in _line:
             # 提取该行媒体/ 后链接中的文件名扩展名, 决定替换为 图片/ 还是 视频/
             _m = re.search(r'媒体/([^)\s]+?\.(\w+))', _line)

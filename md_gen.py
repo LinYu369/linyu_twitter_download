@@ -299,9 +299,9 @@ class md_gen():
         # 行尾加两个空格硬换行, 避免与互动数据/其他媒体渲染成同一段; 图片行写 总md+图片md, 视频行写 总md+视频md
         if 'Video' in csv_info[4]:
             if len(csv_info) > 11 and csv_info[11]:
-                # 封面与视频同存于 月份/视频/ 目录(同名不同扩展名); 多md相对 md 所在目录(年份目录), 单md相对用户根目录; 用 / 分隔避免 Windows 反斜杠
+                # 封面存于 月份/视频/视频封面/ 子目录; 多md相对 md 所在目录(年份目录), 单md相对用户根目录; 用 / 分隔避免 Windows 反斜杠
                 _cover = _md_quote(
-                    (fixed_timestr[:7] + '/视频/' if self.md_mode == 'multi' else os.path.dirname(csv_info[6]) + '/') +
+                    (fixed_timestr[:7] + '/视频/视频封面/' if self.md_mode == 'multi' else os.path.dirname(csv_info[6]) + '/视频封面/') +
                     os.path.splitext(os.path.basename(csv_info[6]))[0] + '.jpg')
                 # 封面图上一行单独输出 📹📹 视频名 📹📹 提示这是视频(否则和普通图片无法区分)
                 self.f.write(f'📹📹 {os.path.basename(csv_info[6])} 📹📹  \n')

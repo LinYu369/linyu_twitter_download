@@ -474,16 +474,17 @@ def download_control(_user_info):
                                     async for chunk in response.aiter_bytes(chunk_size=1024*1024):
                                         f.write(chunk)
                                 down_count += 1
-                                # 下载视频封面图到 视频/ 目录与视频文件同目录同名 (失败不影响视频)
+                                # 下载视频封面图到 视频/视频封面/ 子目录 (失败不影响视频)
                                 _poster = csv_info[11] if len(csv_info) > 11 else ''
                                 if _poster:
                                     try:
-                                        os.makedirs(_media_dir, exist_ok=True)
+                                        _cover_dir = os.path.join(_media_dir, '视频封面')
+                                        os.makedirs(_cover_dir, exist_ok=True)
                                         _cover_name = os.path.splitext(
                                             os.path.split(_file_name)[1])[0] + '.jpg'
                                         async with client.stream("GET", quote_url(_poster), timeout=(3.05, 16)) as _response:
                                             if _response.status_code == 200:
-                                                with open(os.path.join(_media_dir, _cover_name), 'wb', buffering=1024*1024) as f:
+                                                with open(os.path.join(_cover_dir, _cover_name), 'wb', buffering=1024*1024) as f:
                                                     async for chunk in _response.aiter_bytes(chunk_size=1024*1024):
                                                         f.write(chunk)
                                     except Exception:
